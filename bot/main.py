@@ -53,11 +53,7 @@ async def main():
 
     # Set bot commands menu (автоматически)
     await bot.set_my_commands([
-        BotCommand(command="run", description="Проверить почту сейчас"),
-        BotCommand(command="status", description="Статистика обработки"),
-        BotCommand(command="stats", description="Доходы и статистика НПД"),
-        BotCommand(command="history", description="История реестров"),
-        BotCommand(command="settings", description="Настройки бота"),
+        BotCommand(command="start", description="Главное меню"),
     ])
     logger.info("Bot commands menu set")
 
