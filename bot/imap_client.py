@@ -87,6 +87,9 @@ class IMAPClient:
                         result = await self._process_csv(content, filename)
 
                         if result:
+                            # Save registry to database
+                            await self.db.save_registry(result)
+                            
                             # Mark as processed
                             await self.db.mark_processed(message_id, filename, file_hash)
                             results.append(result)
