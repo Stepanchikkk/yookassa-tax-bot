@@ -133,11 +133,9 @@ class Database:
 
     async def save_registry(self, data: Dict) -> int:
         """Save registry to database. Returns registry_id."""
-        # Determine status: pending if has payments, confirmed if empty
         status = 'pending' if data['total_amount'] > 0 else 'confirmed'
         
         async with aiosqlite.connect(self.db_path) as db:
-            # Check if registry already exists
             cursor = await db.execute(
                 "SELECT id FROM registries WHERE date = ?",
                 (data["date"],)
@@ -145,7 +143,6 @@ class Database:
             existing = await cursor.fetchone()
             
             if existing:
-                # Update existing registry
                 registry_id = existing[0]
                 await db.execute(
                     """UPDATE registries 
@@ -162,10 +159,8 @@ class Database:
                         registry_id
                     )
                 )
-                # Delete old payments
                 await db.execute("DELETE FROM payments WHERE registry_id = ?", (registry_id,))
             else:
-                # Insert new registry
                 cursor = await db.execute(
                     """INSERT INTO registries 
                        (date, total_amount, commission, payments_count, status, tax_file, payments_file, created_at)
@@ -183,7 +178,6 @@ class Database:
                 )
                 registry_id = cursor.lastrowid
 
-            # Save payments
             for payment in data.get("payments", []):
                 await db.execute(
                     """INSERT INTO payments 
@@ -220,7 +214,6 @@ class Database:
             registry = dict(row)
             registry_id = registry["id"]
 
-            # Get payments
             cursor = await db.execute(
                 "SELECT * FROM payments WHERE registry_id = ?",
                 (registry_id,)
@@ -263,10 +256,8 @@ class Database:
     async def get_monthly_stats(self, year: int, month: int) -> Dict:
         """Get stats for specific month."""
         async with aiosqlite.connect(self.db_path) as db:
-            # Format: YYYY-MM-%
             date_pattern = f"{year:04d}-{month:02d}-%"
             
-            # Total stats
             cursor = await db.execute(
                 """SELECT 
                     COUNT(*) as registries_count,
@@ -288,7 +279,6 @@ class Database:
                 "days_with_income": row[4] or 0
             }
             
-            # Confirmed income
             cursor = await db.execute(
                 """SELECT SUM(total_amount) as confirmed_income
                    FROM registries 
@@ -298,7 +288,6 @@ class Database:
             row = await cursor.fetchone()
             total_stats["confirmed_income"] = row[0] or 0.0
             
-            # Pending income
             cursor = await db.execute(
                 """SELECT SUM(total_amount) as pending_income
                    FROM registries 
@@ -388,5 +377,4 @@ class Database:
 
     async def close(self):
         """Close database connection."""
-        # aiosqlite closes connections automatically
         pass
