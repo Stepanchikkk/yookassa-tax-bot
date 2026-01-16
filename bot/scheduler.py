@@ -116,8 +116,7 @@ class Scheduler:
             if notify_empty.lower() != "true":
                 return  # Don't send notification for empty registry
 
-        # Save to database
-        await self.db.save_registry(result)
+        # Registry already saved in imap_client.check_and_process()
 
         # Format message
         text = (
@@ -133,12 +132,22 @@ class Scheduler:
         builder = InlineKeyboardBuilder()
         
         if count > 0:
+            # Has payments - show confirm button
             builder.row(
                 InlineKeyboardButton(
-                    text="📊 Показать детали",
-                    callback_data=f"registry_details_{date}"
+                    text="✅ Добавлено в налоговую",
+                    callback_data=f"confirm_registry_{date}"
                 )
             )
+        
+        builder.row(
+            InlineKeyboardButton(
+                text="📊 Показать детали",
+                callback_data=f"registry_details_{date}"
+            )
+        )
+        
+        if count > 0:
             builder.row(
                 InlineKeyboardButton(
                     text="📄 Скачать CSV",
@@ -148,7 +157,7 @@ class Scheduler:
         
         builder.row(
             InlineKeyboardButton(
-                text="🗑 Удалить",
+                text="🗑 Закрыть",
                 callback_data="delete_message"
             )
         )
