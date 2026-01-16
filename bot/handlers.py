@@ -47,9 +47,16 @@ def register_handlers(dp: Dispatcher, db: Database):
 
         stats = await db.get_stats()
         
-        last_check = stats.get("last_check", "Never")
-        if last_check != "Never":
-            last_check = datetime.fromisoformat(last_check).strftime("%Y-%m-%d %H:%M:%S")
+        last_check = stats.get("last_check")
+        
+        # Проверяем, что last_check это строка, а не None
+        if last_check and isinstance(last_check, str):
+            try:
+                last_check = datetime.fromisoformat(last_check).strftime("%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                last_check = "Never"
+        else:
+            last_check = "Never"
 
         await message.answer(
             f"📊 <b>Статус бота</b>\n\n"
@@ -109,14 +116,16 @@ async def send_tax_report(message: Message, result: dict):
     
     # Send tax_ready file
     if result.get("tax_file"):
+        from aiogram.types import FSInputFile
         await message.answer_document(
-            document=result["tax_file"],
+            document=FSInputFile(result["tax_file"]),
             caption="📄 Итоговая запись для НПД"
         )
 
     # Send payments details
     if result.get("payments_file"):
+        from aiogram.types import FSInputFile
         await message.answer_document(
-            document=result["payments_file"],
+            document=FSInputFile(result["payments_file"]),
             caption="📋 Детализация платежей"
         )

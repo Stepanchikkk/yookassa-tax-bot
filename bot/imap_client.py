@@ -27,7 +27,7 @@ class IMAPClient:
         self.user = os.getenv("IMAP_USER")
         self.password = os.getenv("IMAP_PASSWORD")
         self.from_filter = os.getenv("EMAIL_FROM_FILTER", "")
-        self.subject_filter = os.getenv("EMAIL_SUBJECT_FILTER", "")
+        self.subject_filter = os.getenv("EMAIL_SUBJECT_FILTER", "").lower()
         self.days_to_check = int(os.getenv("DAYS_TO_CHECK", "7"))
         self.allowed_ext = os.getenv("ALLOWED_EXTENSIONS", ".csv").split(",")
 
@@ -59,6 +59,13 @@ class IMAPClient:
 
                     if not msg_data:
                         continue
+
+                    # Filter by subject (if filter set)
+                    if self.subject_filter:
+                        subject = msg_data.get("subject", "").lower()
+                        if self.subject_filter not in subject:
+                            logger.debug(f"Skipping message: subject doesn't match filter")
+                            continue
 
                     message_id = msg_data["message_id"]
                     attachments = msg_data["attachments"]
@@ -110,7 +117,7 @@ class IMAPClient:
 
     def _search_messages(self, mail: imaplib.IMAP4_SSL) -> List[str]:
         """Search for messages matching filters (sync)."""
-        # Build search criteria
+        # Build search criteria (только ASCII-совместимые фильтры)
         since_date = (datetime.now() - timedelta(days=self.days_to_check)).strftime("%d-%b-%Y")
         
         criteria = f'SINCE {since_date}'
@@ -118,8 +125,7 @@ class IMAPClient:
         if self.from_filter:
             criteria += f' FROM "{self.from_filter}"'
         
-        if self.subject_filter:
-            criteria += f' SUBJECT "{self.subject_filter}"'
+        # SUBJECT с кириллицей не работает в IMAP — фильтруем позже в _fetch_message
 
         logger.info(f"IMAP search criteria: {criteria}")
 
@@ -145,6 +151,17 @@ class IMAPClient:
         # Get message ID
         message_id = msg.get("Message-ID", f"unknown-{msg_id}")
 
+        # Get subject for filtering
+        subject_header = msg.get("Subject", "")
+        subject = ""
+        if subject_header:
+            decoded = decode_header(subject_header)
+            for part, encoding in decoded:
+                if isinstance(part, bytes):
+                    subject += part.decode(encoding or "utf-8", errors="ignore")
+                else:
+                    subject += part
+
         # Extract attachments
         attachments = []
 
@@ -165,7 +182,10 @@ class IMAPClient:
             if decoded[0][1]:
                 filename = decoded[0][0].decode(decoded[0][1])
             else:
-                filename = decoded[0][0]
+                if isinstance(decoded[0][0], bytes):
+                    filename = decoded[0][0].decode("utf-8", errors="ignore")
+                else:
+                    filename = decoded[0][0]
 
             # Check extension
             if not any(filename.lower().endswith(ext) for ext in self.allowed_ext):
@@ -181,6 +201,7 @@ class IMAPClient:
 
         return {
             "message_id": message_id,
+            "subject": subject,
             "attachments": attachments
         }
 
