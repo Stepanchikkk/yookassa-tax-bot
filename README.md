@@ -154,7 +154,7 @@ LOG_LEVEL=INFO                          # DEBUG/INFO/WARNING/ERROR
 ---
 
 ## Обновление бота
-### На сервере (одной командой)
+На сервере (одной командой)
 ```bash
 cd /opt/yookassa-tax-bot && sudo git pull && sudo docker compose down && sudo docker compose up -d --build
 ```
@@ -163,19 +163,27 @@ cd /opt/yookassa-tax-bot && sudo git pull && sudo docker compose down && sudo do
 
 ## Полезные команды
 
+Просмотр логов
 ```bash
-# Просмотр логов
 sudo docker compose logs -f
+```
 
-# Перезапуск
+Перезапуск
+```bash
 sudo docker compose restart
+```
 
-# Остановка
+Остановка
+```bash
 sudo docker compose down
+```
 
-# Полная пересборка
+Полная пересборка
+```bash
 sudo docker compose down && sudo docker compose up -d --build --force-recreate
+```
 
-# Проверка ресурсов
+Проверка ресурсов
+```bash
 sudo docker stats yookassa-tax-bot
 ```
