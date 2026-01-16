@@ -30,19 +30,24 @@ def parse_yookassa_csv(content: str) -> Optional[Dict]:
             logger.warning("CSV too short")
             return None
 
-        # Extract date from first 5 lines: "Дата платежей: 2026-01-15"
-        date_str = "unknown"
-        for i, line in enumerate(lines[:5]):
-            if "Дата платежей:" in line or "Дата платежей" in line:
-                # Split by : and take second part
+        # Extract date from first 10 lines: "Дата платежей: 2026-01-15" or "Дата платежей:2026-01-15"
+        date_str = None
+        for i, line in enumerate(lines[:10]):
+            if "Дата платежей" in line:
+                # Try to extract date
+                # Format can be: "Дата платежей: 2026-01-15" or "Дата платежей:2026-01-15"
                 parts = line.split(":", 1)
                 if len(parts) > 1:
-                    date_str = parts[1].strip()
-                    logger.info(f"Found date in line {i}: {date_str}")
-                    break
+                    date_candidate = parts[1].strip().split(";")[0].strip()
+                    # Validate date format YYYY-MM-DD
+                    if len(date_candidate) == 10 and date_candidate[4] == "-" and date_candidate[7] == "-":
+                        date_str = date_candidate
+                        logger.info(f"Found date in line {i}: {date_str}")
+                        break
         
-        if date_str == "unknown":
-            logger.warning(f"Date not found in CSV. Line 1 was: {lines[1][:100]}")
+        if not date_str:
+            logger.error(f"Date not found in CSV. First 10 lines: {lines[:10]}")
+            return None
 
         # Find header row (contains "Идентификатор платежа")
         header_idx = None
@@ -100,7 +105,7 @@ def parse_yookassa_csv(content: str) -> Optional[Dict]:
                 })
 
             except (ValueError, KeyError) as e:
-                logger.warning(f"Error parsing row: {e}")
+                logger.warning(f"Error parsing row: {e}, row: {row}")
                 continue
 
         # ВАЖНО: даже если платежей 0, возвращаем результат (чтобы админ знал о пустом реестре)
