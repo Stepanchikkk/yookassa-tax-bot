@@ -7,6 +7,7 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 
 from bot.database import Database
 from bot.handlers import register_handlers
@@ -49,6 +50,16 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     dp = Dispatcher()
+
+    # Set bot commands menu (автоматически)
+    await bot.set_my_commands([
+        BotCommand(command="run", description="Проверить почту сейчас"),
+        BotCommand(command="status", description="Статистика обработки"),
+        BotCommand(command="stats", description="Доходы и статистика НПД"),
+        BotCommand(command="history", description="История реестров"),
+        BotCommand(command="settings", description="Настройки бота"),
+    ])
+    logger.info("Bot commands menu set")
 
     # Register handlers
     register_handlers(dp, db)
