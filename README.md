@@ -65,11 +65,13 @@ IMAP_PASSWORD=your-password
 
 ### 3. Установка на сервер
 
+Клонирование и настройка
 ```bash
-# Клонирование и настройка
 cd /opt && sudo git clone https://github.com/YOUR_USERNAME/yookassa-tax-bot.git && cd yookassa-tax-bot && sudo cp .env.example .env && sudo nano .env
+```
 
-# Запуск
+Запуск
+```bash
 sudo docker compose up -d && sudo docker compose logs -f
 ```
 
@@ -154,7 +156,7 @@ LOG_LEVEL=INFO                          # DEBUG/INFO/WARNING/ERROR
 ---
 
 ## Обновление бота
-На сервере (одной командой)
+
 ```bash
 cd /opt/yookassa-tax-bot && sudo git pull && sudo docker compose down && sudo docker compose up -d --build
 ```
@@ -187,3 +189,17 @@ sudo docker compose down && sudo docker compose up -d --build --force-recreate
 ```bash
 sudo docker stats yookassa-tax-bot
 ```
+
+---
+
+## Безопасность
+
+**✅ Загружается на GitHub:**
+- Весь код проекта
+- `.env.example` (шаблон без секретов)
+
+**❌ НЕ загружается (защищено `.gitignore`):**
+- `.env` (ваши токены и пароли)
+- `data/` (база данных и временные файлы)
+
+**⚠️ Важно:** Никогда не коммитьте `.env` файл!
