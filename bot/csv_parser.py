@@ -30,13 +30,19 @@ def parse_yookassa_csv(content: str) -> Optional[Dict]:
             logger.warning("CSV too short")
             return None
 
-        # Extract date from 2nd line: "Дата платежей: 2026-01-15"
-        date_line = lines[1]
-        if "Дата платежей:" in date_line:
-            date_str = date_line.split(":", 1)[1].strip()
-        else:
-            logger.warning("Date not found in CSV")
-            date_str = "unknown"
+        # Extract date from first 5 lines: "Дата платежей: 2026-01-15"
+        date_str = "unknown"
+        for i, line in enumerate(lines[:5]):
+            if "Дата платежей:" in line or "Дата платежей" in line:
+                # Split by : and take second part
+                parts = line.split(":", 1)
+                if len(parts) > 1:
+                    date_str = parts[1].strip()
+                    logger.info(f"Found date in line {i}: {date_str}")
+                    break
+        
+        if date_str == "unknown":
+            logger.warning(f"Date not found in CSV. Line 1 was: {lines[1][:100]}")
 
         # Find header row (contains "Идентификатор платежа")
         header_idx = None
@@ -97,9 +103,8 @@ def parse_yookassa_csv(content: str) -> Optional[Dict]:
                 logger.warning(f"Error parsing row: {e}")
                 continue
 
-        if not payments:
-            logger.info("No payments found in CSV (empty registry)")
-            return None
+        # ВАЖНО: даже если платежей 0, возвращаем результат (чтобы админ знал о пустом реестре)
+        logger.info(f"Parsed CSV: date={date_str}, payments={len(payments)}, total={total_amount:.2f} RUB")
 
         return {
             "date": date_str,
