@@ -38,22 +38,25 @@ def register_handlers(dp: Dispatcher, db: Database):
         except:
             pass
 
-        await message.answer(
-            "👋 <b>YooKassa Tax Bot для НПД</b>\n\n"
-            "Автоматическая обработка реестров для «Мой налог».\n\n"
-            "<b>Команды:</b>\n"
-            "`/run` — проверить почту сейчас\n"
-            "`/status` — статистика обработки\n"
-            "`/stats` — доходы и статистика НПД\n"
-            "`/history` — история реестров\n"
-            "`/settings` — настройки бота"
-        )
+        await show_main_menu(message, db)
 
     @dp.message(Command("status"))
     async def cmd_status(message: Message):
-        """Handle /status command."""
+        """Handle /status command (legacy)."""
         if not is_admin(message.from_user.id):
-            await message.answer("⛔ Access denied.")
+            return
+
+        try:
+            await message.delete()
+        except:
+            pass
+
+        await show_main_menu(message, db)
+
+    @dp.message(Command("run"))
+    async def cmd_run(message: Message):
+        """Handle /run command - manual trigger."""
+        if not is_admin(message.from_user.id):
             return
 
         # Delete user command
@@ -62,10 +65,95 @@ def register_handlers(dp: Dispatcher, db: Database):
         except:
             pass
 
+        status_msg = await message.answer("🔄 Проверяю почту...")
+
+        try:
+            client = IMAPClient(db)
+            results = await client.check_and_process()
+
+            await status_msg.delete()
+
+            if not results:
+                # Show notification about empty check
+                builder = InlineKeyboardBuilder()
+                builder.row(InlineKeyboardButton(text="🗑 Закрыть", callback_data="delete_message"))
+                
+                await message.answer(
+                    "✅ Новых реестров не найдено.",
+                    reply_markup=builder.as_markup()
+                )
+                return
+
+            # Send results
+            for result in results:
+                await send_tax_report(message, result, db)
+
+        except Exception as e:
+            logger.error(f"Error in manual run: {e}", exc_info=True)
+            await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
+
+    # Delete any text messages from user (not requested by bot)
+    @dp.message(F.text)
+    async def handle_text(message: Message):
+        """Auto-delete user text messages."""
+        if not is_admin(message.from_user.id):
+            return
+
+        try:
+            await message.delete()
+        except:
+            pass
+
+    # Callback handlers
+    @dp.callback_query(F.data == "main_menu")
+    async def callback_main_menu(callback: CallbackQuery):
+        """Show main menu."""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("⛔ Access denied.", show_alert=True)
+            return
+
+        await callback.answer()
+        await show_main_menu(callback.message, db, edit=True)
+
+    @dp.callback_query(F.data == "check_mail")
+    async def callback_check_mail(callback: CallbackQuery):
+        """Manual mail check."""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("⛔ Access denied.", show_alert=True)
+            return
+
+        await callback.answer("🔄 Проверяю почту...")
+
+        try:
+            client = IMAPClient(db)
+            results = await client.check_and_process()
+
+            if not results:
+                await callback.answer("✅ Новых реестров не найдено.", show_alert=True)
+                return
+
+            # Send results
+            for result in results:
+                await send_tax_report(callback.message, result, db)
+
+            await callback.answer(f"✅ Обработано реестров: {len(results)}", show_alert=True)
+
+        except Exception as e:
+            logger.error(f"Error in callback check: {e}", exc_info=True)
+            await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+
+    @dp.callback_query(F.data == "show_status")
+    async def callback_status(callback: CallbackQuery):
+        """Show status."""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("⛔ Access denied.", show_alert=True)
+            return
+
+        await callback.answer()
+
         stats = await db.get_stats()
         
         last_check = stats.get("last_check")
-        
         if last_check and isinstance(last_check, str):
             try:
                 last_check = datetime.fromisoformat(last_check).strftime("%Y-%m-%d %H:%M:%S")
@@ -74,52 +162,26 @@ def register_handlers(dp: Dispatcher, db: Database):
         else:
             last_check = "Never"
 
-        await message.answer(
+        text = (
             f"📊 <b>Статус бота</b>\n\n"
             f"🕐 Последняя проверка: {last_check}\n"
             f"📧 Писем обработано: {stats.get('emails_processed', 0)}\n"
             f"📁 Реестров обработано: {stats.get('files_processed', 0)}"
         )
 
-    @dp.message(Command("run"))
-    async def cmd_run(message: Message):
-        """Handle /run command - manual trigger."""
-        if not is_admin(message.from_user.id):
-            await message.answer("⛔ Access denied.")
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="◀️ Назад в меню", callback_data="main_menu"))
+
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+    @dp.callback_query(F.data == "show_stats")
+    async def callback_stats(callback: CallbackQuery):
+        """Show NPD statistics."""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("⛔ Access denied.", show_alert=True)
             return
 
-        status_msg = await message.answer("🔄 Проверяю почту...")
-
-        try:
-            client = IMAPClient(db)
-            results = await client.check_and_process()
-
-            if not results:
-                await status_msg.edit_text("✅ Новых реестров не найдено.")
-                return
-
-            # Send results
-            for result in results:
-                await send_tax_report(message, result, db)
-
-            await status_msg.edit_text(f"✅ Обработано реестров: {len(results)}")
-
-        except Exception as e:
-            logger.error(f"Error in manual run: {e}", exc_info=True)
-            await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
-
-    @dp.message(Command("stats"))
-    async def cmd_stats(message: Message):
-        """Handle /stats command - НПД statistics."""
-        if not is_admin(message.from_user.id):
-            await message.answer("⛔ Access denied.")
-            return
-
-        # Delete user command
-        try:
-            await message.delete()
-        except:
-            pass
+        await callback.answer()
 
         now = datetime.now()
         current_year = now.year
@@ -161,6 +223,8 @@ def register_handlers(dp: Dispatcher, db: Database):
             f"📊 <b>Статистика доходов НПД</b>\n\n"
             f"<b>За текущий месяц ({month_name} {current_year}):</b>\n"
             f"💰 Доход: <b>{month_stats['total_income']:,.2f} RUB</b>\n"
+            f"✅ Внесено в налоговую: {month_stats['confirmed_income']:,.2f} RUB\n"
+            f"⚠️ Ждёт подтверждения: {month_stats['pending_income']:,.2f} RUB\n"
             f"💸 Комиссия: {month_stats['total_commission']:,.2f} RUB\n"
             f"📦 Платежей: {month_stats['total_payments']}\n"
             f"📅 Дней с доходом: {month_stats['days_with_income']}/{days_in_month}\n\n"
@@ -182,55 +246,89 @@ def register_handlers(dp: Dispatcher, db: Database):
             f"📁 Реестров: {all_time_stats['registries_count']}"
         )
 
-        await message.answer(text)
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="◀️ Назад в меню", callback_data="main_menu"))
 
-    @dp.message(Command("history"))
-    async def cmd_history(message: Message):
-        """Handle /history command."""
-        if not is_admin(message.from_user.id):
-            await message.answer("⛔ Access denied.")
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+    @dp.callback_query(F.data == "show_history")
+    async def callback_history(callback: CallbackQuery):
+        """Show history."""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("⛔ Access denied.", show_alert=True)
             return
 
-        # Delete user command
-        try:
-            await message.delete()
-        except:
-            pass
+        await callback.answer()
 
         history = await db.get_history(limit=15)
 
         if not history:
-            await message.answer("📋 История пуста. Реестры ещё не обрабатывались.")
+            text = "📋 История пуста. Реестры ещё не обрабатывались."
+        else:
+            text = "📋 <b>История реестров</b>\n\n"
+
+            for reg in history:
+                date = reg["date"]
+                amount = reg["total_amount"]
+                count = reg["payments_count"]
+                status = reg["status"]
+                
+                if status == "confirmed":
+                    emoji = "✅"
+                else:
+                    emoji = "🟡"
+                
+                if amount > 0:
+                    status_text = " (ждёт)" if status == "pending" else ""
+                    text += f"{emoji} {date} — <b>{amount:,.2f} RUB</b> ({count} шт.){status_text}\n"
+                else:
+                    text += f"{emoji} {date} — пусто\n"
+
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="◀️ Назад в меню", callback_data="main_menu"))
+
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+    @dp.callback_query(F.data == "show_pending")
+    async def callback_pending(callback: CallbackQuery):
+        """Show pending registries."""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("⛔ Access denied.", show_alert=True)
             return
 
-        text = "📋 <b>История реестров</b>\n\n"
+        await callback.answer()
 
-        for reg in history:
-            date = reg["date"]
-            amount = reg["total_amount"]
-            count = reg["payments_count"]
+        pending = await db.get_pending_registries()
+
+        if not pending:
+            text = "✅ Все реестры подтверждены!"
+        else:
+            total_pending = sum(r["total_amount"] for r in pending)
             
-            emoji = "✅" if amount > 0 else "⚪"
-            
-            if amount > 0:
-                text += f"{emoji} {date} — <b>{amount:,.2f} RUB</b> ({count} шт.)\n"
-            else:
-                text += f"{emoji} {date} — пусто\n"
+            text = f"⚠️ <b>Неподтверждённые реестры ({len(pending)})</b>\n\n"
 
-        await message.answer(text)
+            for reg in pending:
+                date = reg["date"]
+                amount = reg["total_amount"]
+                count = reg["payments_count"]
+                
+                text += f"🟡 {date} — <b>{amount:,.2f} RUB</b> ({count} шт.)\n"
 
-    @dp.message(Command("settings"))
-    async def cmd_settings(message: Message):
-        """Handle /settings command."""
-        if not is_admin(message.from_user.id):
-            await message.answer("⛔ Access denied.")
+            text += f"\n<b>Всего ждёт внесения: {total_pending:,.2f} RUB</b>"
+
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="◀️ Назад в меню", callback_data="main_menu"))
+
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+    @dp.callback_query(F.data == "show_settings")
+    async def callback_settings(callback: CallbackQuery):
+        """Show settings."""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("⛔ Access denied.", show_alert=True)
             return
 
-        # Delete user command
-        try:
-            await message.delete()
-        except:
-            pass
+        await callback.answer()
 
         # Get current settings
         notify_empty = await db.get_setting("notify_empty_registries")
@@ -246,7 +344,7 @@ def register_handlers(dp: Dispatcher, db: Database):
         text = (
             f"⚙️ <b>Настройки бота</b>\n\n"
             f"📢 Уведомления о пустых реестрах: {notify_status}\n"
-            f"📝 Описание для налоговой:\n`{tax_desc}`"
+            f"📝 Описание для налоговой:\n<code>{tax_desc}</code>"
         )
 
         builder = InlineKeyboardBuilder()
@@ -262,11 +360,17 @@ def register_handlers(dp: Dispatcher, db: Database):
                 callback_data="settings_change_desc"
             )
         )
+        builder.row(
+            InlineKeyboardButton(
+                text="◀️ Назад в меню",
+                callback_data="main_menu"
+            )
+        )
 
-        await message.answer(text, reply_markup=builder.as_markup())
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
 
     @dp.callback_query(F.data == "settings_toggle_notify")
-    async def toggle_notify(callback: CallbackQuery):
+    async def callback_toggle_notify(callback: CallbackQuery):
         """Toggle empty registries notifications."""
         if not is_admin(callback.from_user.id):
             await callback.answer("⛔ Access denied.", show_alert=True)
@@ -279,37 +383,13 @@ def register_handlers(dp: Dispatcher, db: Database):
         new_value = "false" if current.lower() == "true" else "true"
         await db.set_setting("notify_empty_registries", new_value)
 
-        notify_status = "✅ Вкл" if new_value == "true" else "❌ Выкл"
-        
-        tax_desc = await db.get_setting("tax_description")
-        if tax_desc is None:
-            tax_desc = os.getenv("TAX_DESCRIPTION", "Доступ к IT-сервису")
-
-        text = (
-            f"⚙️ <b>Настройки бота</b>\n\n"
-            f"📢 Уведомления о пустых реестрах: {notify_status}\n"
-            f"📝 Описание для налоговой:\n`{tax_desc}`"
-        )
-
-        builder = InlineKeyboardBuilder()
-        builder.row(
-            InlineKeyboardButton(
-                text="📢 Уведомления",
-                callback_data="settings_toggle_notify"
-            )
-        )
-        builder.row(
-            InlineKeyboardButton(
-                text="📝 Изменить описание",
-                callback_data="settings_change_desc"
-            )
-        )
-
-        await callback.message.edit_text(text, reply_markup=builder.as_markup())
         await callback.answer("✅ Настройка изменена")
+        
+        # Refresh settings view
+        await callback_settings(callback)
 
     @dp.callback_query(F.data == "settings_change_desc")
-    async def change_description(callback: CallbackQuery):
+    async def callback_change_desc(callback: CallbackQuery):
         """Prompt to change tax description."""
         if not is_admin(callback.from_user.id):
             await callback.answer("⛔ Access denied.", show_alert=True)
@@ -317,35 +397,15 @@ def register_handlers(dp: Dispatcher, db: Database):
 
         await callback.answer()
         
-        # Delete old settings message
-        try:
-            await callback.message.delete()
-        except:
-            pass
-        
-        await callback.message.answer(
-            "📝 Отправьте новое описание для налоговой.\n\n"
-            "Например: `Доступ к IT-сервису (подписка)`\n\n"
-            "Или `/cancel` для отмены."
+        # For now, just show info (implementing input requires FSM)
+        await callback.answer(
+            "📝 Чтобы изменить описание, отредактируйте TAX_DESCRIPTION в .env и перезапустите бота.",
+            show_alert=True
         )
-    
-    @dp.message(Command("cancel"))
-    async def cmd_cancel(message: Message):
-        """Cancel current operation."""
-        if not is_admin(message.from_user.id):
-            return
-        
-        # Delete user command
-        try:
-            await message.delete()
-        except:
-            pass
-        
-        await message.answer("❌ Отменено")
 
     # Callback handlers for tax reports
     @dp.callback_query(F.data.startswith("registry_details_"))
-    async def show_registry_details(callback: CallbackQuery):
+    async def callback_registry_details(callback: CallbackQuery):
         """Show detailed payments list."""
         if not is_admin(callback.from_user.id):
             await callback.answer("⛔ Access denied.", show_alert=True)
@@ -368,30 +428,30 @@ def register_handlers(dp: Dispatcher, db: Database):
                 f"⚪ Платежей не найдено.\n\n"
                 f"<i>Реестр пустой — доход 0.00 RUB</i>"
             )
-            await callback.message.answer(text)
-            await callback.answer()
-            return
+        else:
+            text = f"📋 <b>Детализация платежей ({len(payments)} шт.)</b>\n\n"
 
-        text = f"📋 <b>Детализация платежей ({len(payments)} шт.)</b>\n\n"
+            for i, p in enumerate(payments[:50], 1):  # Limit to 50 to avoid message length limit
+                amount = p["amount"]
+                time = p.get("payment_time", "").split()[0] if p.get("payment_time") else "?"
+                desc = p.get("description", "")[:30]
+                
+                text += f"{i}️⃣ {time} — <b>{amount:.2f} RUB</b>"
+                if desc:
+                    text += f" ({desc})"
+                text += "\n"
 
-        for i, p in enumerate(payments[:50], 1):  # Limit to 50 to avoid message length limit
-            amount = p["amount"]
-            time = p.get("payment_time", "").split()[0] if p.get("payment_time") else "?"
-            desc = p.get("description", "")[:30]
-            
-            text += f"{i}️⃣ {time} — <b>{amount:.2f} RUB</b>"
-            if desc:
-                text += f" ({desc})"
-            text += "\n"
+            if len(payments) > 50:
+                text += f"\n<i>... и ещё {len(payments) - 50} платежей</i>"
 
-        if len(payments) > 50:
-            text += f"\n<i>... и ещё {len(payments) - 50} платежей</i>"
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="🗑 Закрыть", callback_data="delete_message"))
 
-        await callback.message.answer(text)
+        await callback.message.answer(text, reply_markup=builder.as_markup())
         await callback.answer()
 
     @dp.callback_query(F.data.startswith("registry_csv_"))
-    async def send_registry_csv(callback: CallbackQuery):
+    async def callback_registry_csv(callback: CallbackQuery):
         """Send CSV files for registry."""
         if not is_admin(callback.from_user.id):
             await callback.answer("⛔ Access denied.", show_alert=True)
@@ -426,8 +486,27 @@ def register_handlers(dp: Dispatcher, db: Database):
 
         await callback.answer("✅ Файлы отправлены")
 
-    @dp.callback_query(F.data.startswith("delete_message"))
-    async def delete_message(callback: CallbackQuery):
+    @dp.callback_query(F.data.startswith("confirm_registry_"))
+    async def callback_confirm_registry(callback: CallbackQuery):
+        """Confirm registry as added to tax."""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("⛔ Access denied.", show_alert=True)
+            return
+
+        date = callback.data.replace("confirm_registry_", "")
+        
+        await db.confirm_registry(date)
+        
+        await callback.answer("✅ Отмечено как внесено в налоговую")
+        
+        # Delete message
+        try:
+            await callback.message.delete()
+        except:
+            pass
+
+    @dp.callback_query(F.data == "delete_message")
+    async def callback_delete_message(callback: CallbackQuery):
         """Delete message."""
         if not is_admin(callback.from_user.id):
             await callback.answer("⛔ Access denied.", show_alert=True)
@@ -435,9 +514,47 @@ def register_handlers(dp: Dispatcher, db: Database):
 
         try:
             await callback.message.delete()
+            await callback.answer()
         except Exception as e:
             logger.error(f"Error deleting message: {e}")
-            await callback.answer("❌ Не удалось удалить")
+            await callback.answer("❌ Не удалось закрыть")
+
+
+async def show_main_menu(message: Message, db: Database, edit: bool = False):
+    """Show main menu with inline buttons."""
+    # Get pending count
+    pending = await db.get_pending_registries()
+    pending_count = len(pending)
+    
+    text = "👋 <b>YooKassa Tax Bot для НПД</b>\n\nВыберите действие:"
+
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="🔍 Проверить почту", callback_data="check_mail"),
+        InlineKeyboardButton(text="📊 Статус", callback_data="show_status")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📈 Статистика НПД", callback_data="show_stats"),
+        InlineKeyboardButton(text="📋 История", callback_data="show_history")
+    )
+    
+    if pending_count > 0:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"⚠️ Неподтверждённые ({pending_count})",
+                callback_data="show_pending"
+            )
+        )
+    
+    builder.row(
+        InlineKeyboardButton(text="⚙️ Настройки", callback_data="show_settings")
+    )
+
+    if edit:
+        await message.edit_text(text, reply_markup=builder.as_markup())
+    else:
+        await message.answer(text, reply_markup=builder.as_markup())
 
 
 async def send_tax_report(message: Message, result: dict, db: Database):
@@ -461,9 +578,6 @@ async def send_tax_report(message: Message, result: dict, db: Database):
         if notify_empty.lower() != "true":
             return  # Don't send notification for empty registry
 
-    # Save to database
-    await db.save_registry(result)
-
     # Format message
     text = (
         f"📊 <b>Реестр от {date}</b>\n\n"
@@ -477,7 +591,15 @@ async def send_tax_report(message: Message, result: dict, db: Database):
     # Build keyboard
     builder = InlineKeyboardBuilder()
     
-    # Always show "Показать детали" button (even for empty registries)
+    if count > 0:
+        # Has payments - show confirm button
+        builder.row(
+            InlineKeyboardButton(
+                text="✅ Добавлено в налоговую",
+                callback_data=f"confirm_registry_{date}"
+            )
+        )
+    
     builder.row(
         InlineKeyboardButton(
             text="📊 Показать детали",
@@ -495,7 +617,7 @@ async def send_tax_report(message: Message, result: dict, db: Database):
     
     builder.row(
         InlineKeyboardButton(
-            text="🗑 Удалить",
+            text="🗑 Закрыть",
             callback_data="delete_message"
         )
     )

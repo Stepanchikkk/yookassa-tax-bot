@@ -46,6 +46,7 @@ class Database:
                     total_amount REAL NOT NULL,
                     commission REAL NOT NULL,
                     payments_count INTEGER NOT NULL,
+                    status TEXT DEFAULT 'pending',
                     tax_file TEXT,
                     payments_file TEXT,
                     created_at TEXT NOT NULL,
@@ -132,16 +133,20 @@ class Database:
 
     async def save_registry(self, data: Dict) -> int:
         """Save registry to database. Returns registry_id."""
+        # Determine status: pending if has payments, confirmed if empty
+        status = 'pending' if data['total_amount'] > 0 else 'confirmed'
+        
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 """INSERT OR REPLACE INTO registries 
-                   (date, total_amount, commission, payments_count, tax_file, payments_file, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   (date, total_amount, commission, payments_count, status, tax_file, payments_file, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     data["date"],
                     data["total_amount"],
                     data["commission"],
                     data["payments_count"],
+                    status,
                     data.get("tax_file"),
                     data.get("payments_file"),
                     datetime.utcnow().isoformat()
@@ -206,12 +211,32 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
+    async def get_pending_registries(self) -> List[Dict]:
+        """Get pending (unconfirmed) registries."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM registries WHERE status = 'pending' ORDER BY date DESC"
+            )
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def confirm_registry(self, date: str):
+        """Mark registry as confirmed."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE registries SET status = 'confirmed' WHERE date = ?",
+                (date,)
+            )
+            await db.commit()
+
     async def get_monthly_stats(self, year: int, month: int) -> Dict:
         """Get stats for specific month."""
         async with aiosqlite.connect(self.db_path) as db:
             # Format: YYYY-MM-%
             date_pattern = f"{year:04d}-{month:02d}-%"
             
+            # Total stats
             cursor = await db.execute(
                 """SELECT 
                     COUNT(*) as registries_count,
@@ -225,22 +250,35 @@ class Database:
             )
             row = await cursor.fetchone()
             
-            if row:
-                return {
-                    "registries_count": row[0] or 0,
-                    "total_income": row[1] or 0.0,
-                    "total_commission": row[2] or 0.0,
-                    "total_payments": row[3] or 0,
-                    "days_with_income": row[4] or 0
-                }
-            
-            return {
-                "registries_count": 0,
-                "total_income": 0.0,
-                "total_commission": 0.0,
-                "total_payments": 0,
-                "days_with_income": 0
+            total_stats = {
+                "registries_count": row[0] or 0,
+                "total_income": row[1] or 0.0,
+                "total_commission": row[2] or 0.0,
+                "total_payments": row[3] or 0,
+                "days_with_income": row[4] or 0
             }
+            
+            # Confirmed income
+            cursor = await db.execute(
+                """SELECT SUM(total_amount) as confirmed_income
+                   FROM registries 
+                   WHERE date LIKE ? AND status = 'confirmed' AND total_amount > 0""",
+                (date_pattern,)
+            )
+            row = await cursor.fetchone()
+            total_stats["confirmed_income"] = row[0] or 0.0
+            
+            # Pending income
+            cursor = await db.execute(
+                """SELECT SUM(total_amount) as pending_income
+                   FROM registries 
+                   WHERE date LIKE ? AND status = 'pending'""",
+                (date_pattern,)
+            )
+            row = await cursor.fetchone()
+            total_stats["pending_income"] = row[0] or 0.0
+            
+            return total_stats
 
     async def get_yearly_stats(self, year: int) -> Dict:
         """Get stats for entire year."""
