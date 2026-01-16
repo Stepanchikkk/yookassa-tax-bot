@@ -181,15 +181,13 @@ def register_handlers(dp: Dispatcher, db: Database):
 
         text = (
             f"📊 <b>Статистика доходов НПД</b>\n\n"
-            f"<b>За текущий месяц ({month_name} {current_year}):</b>\n"
-            f"💰 Доход: <b>{month_stats['total_income']:,.2f} RUB</b>\n"
-            f"✅ Внесено в налоговую: {month_stats['confirmed_income']:,.2f} RUB\n"
-            f"⚠️ Ждёт подтверждения: {month_stats['pending_income']:,.2f} RUB\n"
-            f"💸 Комиссия: {month_stats['total_commission']:,.2f} RUB\n"
+            f"<b>За {month_name} {current_year}:</b>\n"
+            f"✅ Внесено в налоговую: <b>{month_stats['confirmed_income']:,.2f} RUB</b>\n"
+            f"⚠️ Ждёт подтверждения: <b>{month_stats['pending_income']:,.2f} RUB</b>\n"
             f"📦 Платежей: {month_stats['total_payments']}\n"
             f"📅 Дней с доходом: {month_stats['days_with_income']}/{days_in_month}\n\n"
             f"<b>За {current_year} год:</b>\n"
-            f"💰 Доход: <b>{year_income:,.2f} RUB</b>\n"
+            f"💰 Общий доход: <b>{year_income:,.2f} RUB</b>\n"
             f"💸 Комиссия: {year_stats['total_commission']:,.2f} RUB\n"
             f"📦 Платежей: {year_stats['total_payments']}\n\n"
             f"<b>Лимит НПД {current_year}:</b>\n"
@@ -233,6 +231,7 @@ def register_handlers(dp: Dispatcher, db: Database):
                 count = reg["payments_count"]
                 status = reg["status"]
                 
+                # Emoji based on status
                 if status == "confirmed":
                     emoji = "✅"
                 else:
@@ -277,6 +276,18 @@ def register_handlers(dp: Dispatcher, db: Database):
             text += f"\n<b>Всего ждёт внесения: {total_pending:,.2f} RUB</b>"
 
         builder = InlineKeyboardBuilder()
+        
+        # Add buttons for each pending registry
+        if pending:
+            for reg in pending:
+                date = reg["date"]
+                builder.row(
+                    InlineKeyboardButton(
+                        text=f"📊 Детали {date}",
+                        callback_data=f"show_pending_detail_{date}"
+                    )
+                )
+        
         builder.row(InlineKeyboardButton(text="◀️ Назад в меню", callback_data="main_menu"))
 
         await callback.message.edit_text(text, reply_markup=builder.as_markup())
@@ -444,6 +455,72 @@ def register_handlers(dp: Dispatcher, db: Database):
             await callback.message.delete()
         except:
             pass
+
+    @dp.callback_query(F.data.startswith("show_pending_detail_"))
+    async def callback_show_pending_detail(callback: CallbackQuery):
+        """Show detailed pending registry with action buttons."""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("⛔ Access denied.", show_alert=True)
+            return
+
+        date = callback.data.replace("show_pending_detail_", "")
+        
+        registry = await db.get_registry(date)
+        
+        if not registry:
+            await callback.answer("❌ Реестр не найден", show_alert=True)
+            return
+
+        # Get tax description
+        description = await db.get_setting("tax_description")
+        if description is None:
+            description = os.getenv("TAX_DESCRIPTION", "Доступ к IT-сервису")
+
+        total = registry["total_amount"]
+        count = registry["payments_count"]
+        commission = registry["commission"]
+
+        text = (
+            f"📊 <b>Реестр от {date}</b>\n\n"
+            f"💰 Доход: <b>{total:,.2f} RUB</b>\n"
+            f"📦 Платежей: {count}\n"
+            f"💸 Комиссия: {commission:,.2f} RUB (справочно)\n\n"
+            f"<b>Для «Мой налог»:</b>\n"
+            f"<code>{date} — {total:.2f} RUB — {description}</code>"
+        )
+
+        builder = InlineKeyboardBuilder()
+        
+        builder.row(
+            InlineKeyboardButton(
+                text="✅ Добавлено в налоговую",
+                callback_data=f"confirm_registry_{date}"
+            )
+        )
+        
+        builder.row(
+            InlineKeyboardButton(
+                text="📊 Показать детали",
+                callback_data=f"registry_details_{date}"
+            )
+        )
+        
+        builder.row(
+            InlineKeyboardButton(
+                text="📄 Скачать CSV",
+                callback_data=f"registry_csv_{date}"
+            )
+        )
+        
+        builder.row(
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data="show_pending"
+            )
+        )
+
+        await callback.message.answer(text, reply_markup=builder.as_markup())
+        await callback.answer()
 
     @dp.callback_query(F.data == "delete_message")
     async def callback_delete_message(callback: CallbackQuery):
