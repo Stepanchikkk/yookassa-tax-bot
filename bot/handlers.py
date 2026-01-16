@@ -32,15 +32,21 @@ def register_handlers(dp: Dispatcher, db: Database):
             await message.answer("⛔ Access denied. This bot is private.")
             return
 
+        # Delete user command
+        try:
+            await message.delete()
+        except:
+            pass
+
         await message.answer(
             "👋 <b>YooKassa Tax Bot для НПД</b>\n\n"
             "Автоматическая обработка реестров для «Мой налог».\n\n"
             "<b>Команды:</b>\n"
-            "/run — проверить почту сейчас\n"
-            "/status — статистика обработки\n"
-            "/stats — доходы и статистика НПД\n"
-            "/history — история реестров\n"
-            "/settings — настройки бота"
+            "`/run` — проверить почту сейчас\n"
+            "`/status` — статистика обработки\n"
+            "`/stats` — доходы и статистика НПД\n"
+            "`/history` — история реестров\n"
+            "`/settings` — настройки бота"
         )
 
     @dp.message(Command("status"))
@@ -49,6 +55,12 @@ def register_handlers(dp: Dispatcher, db: Database):
         if not is_admin(message.from_user.id):
             await message.answer("⛔ Access denied.")
             return
+
+        # Delete user command
+        try:
+            await message.delete()
+        except:
+            pass
 
         stats = await db.get_stats()
         
@@ -102,6 +114,12 @@ def register_handlers(dp: Dispatcher, db: Database):
         if not is_admin(message.from_user.id):
             await message.answer("⛔ Access denied.")
             return
+
+        # Delete user command
+        try:
+            await message.delete()
+        except:
+            pass
 
         now = datetime.now()
         current_year = now.year
@@ -173,6 +191,12 @@ def register_handlers(dp: Dispatcher, db: Database):
             await message.answer("⛔ Access denied.")
             return
 
+        # Delete user command
+        try:
+            await message.delete()
+        except:
+            pass
+
         history = await db.get_history(limit=15)
 
         if not history:
@@ -202,6 +226,12 @@ def register_handlers(dp: Dispatcher, db: Database):
             await message.answer("⛔ Access denied.")
             return
 
+        # Delete user command
+        try:
+            await message.delete()
+        except:
+            pass
+
         # Get current settings
         notify_empty = await db.get_setting("notify_empty_registries")
         if notify_empty is None:
@@ -216,7 +246,7 @@ def register_handlers(dp: Dispatcher, db: Database):
         text = (
             f"⚙️ <b>Настройки бота</b>\n\n"
             f"📢 Уведомления о пустых реестрах: {notify_status}\n"
-            f"📝 Описание для налоговой:\n<code>{tax_desc}</code>"
+            f"📝 Описание для налоговой:\n`{tax_desc}`"
         )
 
         builder = InlineKeyboardBuilder()
@@ -258,7 +288,7 @@ def register_handlers(dp: Dispatcher, db: Database):
         text = (
             f"⚙️ <b>Настройки бота</b>\n\n"
             f"📢 Уведомления о пустых реестрах: {notify_status}\n"
-            f"📝 Описание для налоговой:\n<code>{tax_desc}</code>"
+            f"📝 Описание для налоговой:\n`{tax_desc}`"
         )
 
         builder = InlineKeyboardBuilder()
@@ -286,12 +316,32 @@ def register_handlers(dp: Dispatcher, db: Database):
             return
 
         await callback.answer()
+        
+        # Delete old settings message
+        try:
+            await callback.message.delete()
+        except:
+            pass
+        
         await callback.message.answer(
             "📝 Отправьте новое описание для налоговой.\n\n"
-            "Например: <code>Доступ к IT-сервису (подписка)</code>\n\n"
-            "Или /cancel для отмены."
+            "Например: `Доступ к IT-сервису (подписка)`\n\n"
+            "Или `/cancel` для отмены."
         )
-        # Note: для полноценной реализации нужен FSM, упростим через простую команду
+    
+    @dp.message(Command("cancel"))
+    async def cmd_cancel(message: Message):
+        """Cancel current operation."""
+        if not is_admin(message.from_user.id):
+            return
+        
+        # Delete user command
+        try:
+            await message.delete()
+        except:
+            pass
+        
+        await message.answer("❌ Отменено")
 
     # Callback handlers for tax reports
     @dp.callback_query(F.data.startswith("registry_details_"))
@@ -311,8 +361,15 @@ def register_handlers(dp: Dispatcher, db: Database):
 
         payments = registry.get("payments", [])
         
+        # Show even if empty
         if not payments:
-            await callback.answer("📋 Платежей нет", show_alert=True)
+            text = (
+                f"📋 <b>Детализация за {date}</b>\n\n"
+                f"⚪ Платежей не найдено.\n\n"
+                f"<i>Реестр пустой — доход 0.00 RUB</i>"
+            )
+            await callback.message.answer(text)
+            await callback.answer()
             return
 
         text = f"📋 <b>Детализация платежей ({len(payments)} шт.)</b>\n\n"
@@ -420,13 +477,15 @@ async def send_tax_report(message: Message, result: dict, db: Database):
     # Build keyboard
     builder = InlineKeyboardBuilder()
     
-    if count > 0:
-        builder.row(
-            InlineKeyboardButton(
-                text="📊 Показать детали",
-                callback_data=f"registry_details_{date}"
-            )
+    # Always show "Показать детали" button (even for empty registries)
+    builder.row(
+        InlineKeyboardButton(
+            text="📊 Показать детали",
+            callback_data=f"registry_details_{date}"
         )
+    )
+    
+    if count > 0:
         builder.row(
             InlineKeyboardButton(
                 text="📄 Скачать CSV",
