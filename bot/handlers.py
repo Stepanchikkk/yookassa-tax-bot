@@ -40,58 +40,6 @@ def register_handlers(dp: Dispatcher, db: Database):
 
         await show_main_menu(message, db)
 
-    @dp.message(Command("status"))
-    async def cmd_status(message: Message):
-        """Handle /status command (legacy)."""
-        if not is_admin(message.from_user.id):
-            return
-
-        try:
-            await message.delete()
-        except:
-            pass
-
-        await show_main_menu(message, db)
-
-    @dp.message(Command("run"))
-    async def cmd_run(message: Message):
-        """Handle /run command - manual trigger."""
-        if not is_admin(message.from_user.id):
-            return
-
-        # Delete user command
-        try:
-            await message.delete()
-        except:
-            pass
-
-        status_msg = await message.answer("🔄 Проверяю почту...")
-
-        try:
-            client = IMAPClient(db)
-            results = await client.check_and_process()
-
-            await status_msg.delete()
-
-            if not results:
-                # Show notification about empty check
-                builder = InlineKeyboardBuilder()
-                builder.row(InlineKeyboardButton(text="🗑 Закрыть", callback_data="delete_message"))
-                
-                await message.answer(
-                    "✅ Новых реестров не найдено.",
-                    reply_markup=builder.as_markup()
-                )
-                return
-
-            # Send results
-            for result in results:
-                await send_tax_report(message, result, db)
-
-        except Exception as e:
-            logger.error(f"Error in manual run: {e}", exc_info=True)
-            await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
-
     # Delete any text messages from user (not requested by bot)
     @dp.message(F.text)
     async def handle_text(message: Message):
@@ -129,18 +77,30 @@ def register_handlers(dp: Dispatcher, db: Database):
             results = await client.check_and_process()
 
             if not results:
-                await callback.answer("✅ Новых реестров не найдено.", show_alert=True)
+                # Show notification about empty check
+                builder = InlineKeyboardBuilder()
+                builder.row(InlineKeyboardButton(text="🗑 Закрыть", callback_data="delete_message"))
+                
+                await callback.message.answer(
+                    "✅ Проверка завершена. Новых реестров не найдено.",
+                    reply_markup=builder.as_markup()
+                )
                 return
 
             # Send results
             for result in results:
                 await send_tax_report(callback.message, result, db)
 
-            await callback.answer(f"✅ Обработано реестров: {len(results)}", show_alert=True)
-
         except Exception as e:
             logger.error(f"Error in callback check: {e}", exc_info=True)
-            await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+            
+            builder = InlineKeyboardBuilder()
+            builder.row(InlineKeyboardButton(text="🗑 Закрыть", callback_data="delete_message"))
+            
+            await callback.message.answer(
+                f"❌ Ошибка при проверке почты:\n\n<code>{str(e)}</code>",
+                reply_markup=builder.as_markup()
+            )
 
     @dp.callback_query(F.data == "show_status")
     async def callback_status(callback: CallbackQuery):
@@ -158,9 +118,9 @@ def register_handlers(dp: Dispatcher, db: Database):
             try:
                 last_check = datetime.fromisoformat(last_check).strftime("%Y-%m-%d %H:%M:%S")
             except (ValueError, TypeError):
-                last_check = "Never"
+                last_check = "Никогда"
         else:
-            last_check = "Never"
+            last_check = "Никогда"
 
         text = (
             f"📊 <b>Статус бота</b>\n\n"
@@ -243,7 +203,7 @@ def register_handlers(dp: Dispatcher, db: Database):
             f"\n\n<b>За всё время:</b>\n"
             f"💰 Доход: {all_time_stats['total_income']:,.2f} RUB\n"
             f"📦 Платежей: {all_time_stats['total_payments']}\n"
-            f"📁 Реестров: {all_time_stats['registries_count']}"
+            f"📁 Реестров с доходом: {all_time_stats['registries_count']}"
         )
 
         builder = InlineKeyboardBuilder()
@@ -282,7 +242,7 @@ def register_handlers(dp: Dispatcher, db: Database):
                     status_text = " (ждёт)" if status == "pending" else ""
                     text += f"{emoji} {date} — <b>{amount:,.2f} RUB</b> ({count} шт.){status_text}\n"
                 else:
-                    text += f"{emoji} {date} — пусто\n"
+                    text += f"⚪ {date} — пусто\n"
 
         builder = InlineKeyboardBuilder()
         builder.row(InlineKeyboardButton(text="◀️ Назад в меню", callback_data="main_menu"))
@@ -343,21 +303,16 @@ def register_handlers(dp: Dispatcher, db: Database):
 
         text = (
             f"⚙️ <b>Настройки бота</b>\n\n"
-            f"📢 Уведомления о пустых реестрах: {notify_status}\n"
-            f"📝 Описание для налоговой:\n<code>{tax_desc}</code>"
+            f"📢 Уведомления о пустых реестрах: {notify_status}\n\n"
+            f"📝 Описание для налоговой:\n<code>{tax_desc}</code>\n\n"
+            f"<i>Чтобы изменить описание, измените TAX_DESCRIPTION в .env и перезапустите бота</i>"
         )
 
         builder = InlineKeyboardBuilder()
         builder.row(
             InlineKeyboardButton(
-                text="📢 Уведомления",
+                text="📢 Переключить уведомления",
                 callback_data="settings_toggle_notify"
-            )
-        )
-        builder.row(
-            InlineKeyboardButton(
-                text="📝 Изменить описание",
-                callback_data="settings_change_desc"
             )
         )
         builder.row(
@@ -387,21 +342,6 @@ def register_handlers(dp: Dispatcher, db: Database):
         
         # Refresh settings view
         await callback_settings(callback)
-
-    @dp.callback_query(F.data == "settings_change_desc")
-    async def callback_change_desc(callback: CallbackQuery):
-        """Prompt to change tax description."""
-        if not is_admin(callback.from_user.id):
-            await callback.answer("⛔ Access denied.", show_alert=True)
-            return
-
-        await callback.answer()
-        
-        # For now, just show info (implementing input requires FSM)
-        await callback.answer(
-            "📝 Чтобы изменить описание, отредактируйте TAX_DESCRIPTION в .env и перезапустите бота.",
-            show_alert=True
-        )
 
     # Callback handlers for tax reports
     @dp.callback_query(F.data.startswith("registry_details_"))
