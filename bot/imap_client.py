@@ -191,6 +191,11 @@ class IMAPClient:
             if not any(filename.lower().endswith(ext) for ext in self.allowed_ext):
                 continue
 
+            # Ignore refunds files (not needed for НПД)
+            if "refund" in filename.lower() or "возврат" in filename.lower():
+                logger.info(f"Ignoring refunds file: {filename}")
+                continue
+
             # Get content
             content = part.get_payload(decode=True)
 

@@ -5,6 +5,9 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from pathlib import Path
 
 from bot.database import Database
 from bot.imap_client import IMAPClient
@@ -64,11 +67,8 @@ class Scheduler:
 
         # If already passed today, schedule for tomorrow
         if target <= now:
-            target = datetime.combine(
-                now.date(),
-                target_time,
-                tzinfo=tz
-            ).replace(day=now.day + 1)
+            from datetime import timedelta
+            target = target + timedelta(days=1)
 
         return target
 
@@ -80,9 +80,6 @@ class Scheduler:
 
             if not results:
                 logger.info("No new registries found")
-                # Optionally notify admins
-                # for admin_id in self.admin_ids:
-                #     await self.bot.send_message(admin_id, "✅ Проверка завершена. Новых реестров нет.")
                 return
 
             # Send results to all admins
@@ -99,38 +96,66 @@ class Scheduler:
             logger.error(f"Error in scheduled check: {e}", exc_info=True)
 
     async def _send_report(self, admin_id: int, result: dict):
-        """Send tax report to admin."""
+        """Send tax report to admin with inline buttons."""
         date = result["date"]
         total = result["total_amount"]
         count = result["payments_count"]
         commission = result["commission"]
-        description = os.getenv("TAX_DESCRIPTION", "Доступ к IT-сервису")
+        
+        # Get tax description from settings or env
+        description = await self.db.get_setting("tax_description")
+        if description is None:
+            description = os.getenv("TAX_DESCRIPTION", "Доступ к IT-сервису")
+
+        # Check if should notify about empty registries
+        if count == 0:
+            notify_empty = await self.db.get_setting("notify_empty_registries")
+            if notify_empty is None:
+                notify_empty = os.getenv("NOTIFY_EMPTY_REGISTRIES", "true")
+            
+            if notify_empty.lower() != "true":
+                return  # Don't send notification for empty registry
+
+        # Save to database
+        await self.db.save_registry(result)
 
         # Format message
         text = (
             f"📊 <b>Реестр от {date}</b>\n\n"
-            f"💰 Доход: <b>{total:.2f} RUB</b>\n"
+            f"💰 Доход: <b>{total:,.2f} RUB</b>\n"
             f"📦 Платежей: {count}\n"
-            f"💸 Комиссия: {commission:.2f} RUB (справочно)\n\n"
+            f"💸 Комиссия: {commission:,.2f} RUB (справочно)\n\n"
             f"<b>Для «Мой налог»:</b>\n"
             f"<code>{date} — {total:.2f} RUB — {description}</code>"
         )
 
-        await self.bot.send_message(admin_id, text)
-
-        # Send files
-        if result.get("tax_file"):
-            from aiogram.types import FSInputFile
-            await self.bot.send_document(
-                admin_id,
-                FSInputFile(result["tax_file"]),
-                caption="📄 Итоговая запись для НПД"
+        # Build keyboard
+        builder = InlineKeyboardBuilder()
+        
+        if count > 0:
+            builder.row(
+                InlineKeyboardButton(
+                    text="📊 Показать детали",
+                    callback_data=f"registry_details_{date}"
+                )
             )
-
-        if result.get("payments_file"):
-            from aiogram.types import FSInputFile
-            await self.bot.send_document(
-                admin_id,
-                FSInputFile(result["payments_file"]),
-                caption="📋 Детализация платежей"
+            builder.row(
+                InlineKeyboardButton(
+                    text="📄 Скачать CSV",
+                    callback_data=f"registry_csv_{date}"
+                )
             )
+        
+        builder.row(
+            InlineKeyboardButton(
+                text="🗑 Удалить",
+                callback_data="delete_message"
+            )
+        )
+
+        await self.bot.send_message(
+            admin_id,
+            text,
+            reply_markup=builder.as_markup(),
+            parse_mode="HTML"
+        )
