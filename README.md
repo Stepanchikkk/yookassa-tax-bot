@@ -180,17 +180,3 @@ sudo docker compose down && sudo docker compose up -d --build --force-recreate
 # Проверка ресурсов
 sudo docker stats yookassa-tax-bot
 ```
-
----
-
-## Безопасность
-
-**✅ Загружается на GitHub:**
-- Весь код проекта
-- `.env.example` (шаблон без секретов)
-
-**❌ НЕ загружается (защищено `.gitignore`):**
-- `.env` (ваши токены и пароли)
-- `data/` (база данных и временные файлы)
-
-**⚠️ Важно:** Никогда не коммитьте `.env` файл!
