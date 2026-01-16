@@ -49,6 +49,7 @@ class IMAPClient:
             logger.info(f"Found {len(messages)} messages to check")
 
             results = []
+            processed_count = 0
 
             for msg_id in messages:
                 try:
@@ -83,6 +84,13 @@ class IMAPClient:
                             logger.info(f"Skipping already processed: {filename}")
                             continue
 
+                        # Ignore refunds files (not needed for НПД)
+                        if "refund" in filename.lower() or "возврат" in filename.lower():
+                            logger.info(f"Ignoring refunds file: {filename}")
+                            # Mark as processed to avoid checking again
+                            await self.db.mark_processed(message_id, filename, file_hash)
+                            continue
+
                         # Parse CSV
                         result = await self._process_csv(content, filename)
 
@@ -90,26 +98,31 @@ class IMAPClient:
                             # Save registry to database
                             await self.db.save_registry(result)
                             
-                            # Mark as processed
+                            # Mark as processed ONLY after successful save
                             await self.db.mark_processed(message_id, filename, file_hash)
+                            
+                            processed_count += 1
                             results.append(result)
+                            logger.info(f"Successfully processed: {filename} (date: {result['date']})")
+                        else:
+                            logger.warning(f"Failed to parse CSV: {filename}")
 
                 except Exception as e:
-                    logger.error(f"Error processing message {msg_id}: {e}")
+                    logger.error(f"Error processing message {msg_id}: {e}", exc_info=True)
                     continue
 
             # Close connection
             await loop.run_in_executor(None, mail.logout)
 
             # Update stats
-            await self.db.update_stats(len(messages), len(results))
+            await self.db.update_stats(len(messages), processed_count)
 
-            logger.info(f"Email check complete. Processed {len(results)} new files.")
+            logger.info(f"Email check complete. Processed {processed_count} new files.")
             return results
 
         except Exception as e:
             logger.error(f"Error in email check: {e}", exc_info=True)
-            return []
+            raise  # Re-raise to show error in UI
 
     def _connect(self) -> imaplib.IMAP4_SSL:
         """Connect to IMAP server (sync)."""
@@ -194,11 +207,6 @@ class IMAPClient:
             if not any(filename.lower().endswith(ext) for ext in self.allowed_ext):
                 continue
 
-            # Ignore refunds files (not needed for НПД)
-            if "refund" in filename.lower() or "возврат" in filename.lower():
-                logger.info(f"Ignoring refunds file: {filename}")
-                continue
-
             # Get content
             content = part.get_payload(decode=True)
 
@@ -232,8 +240,10 @@ class IMAPClient:
             # Tax-ready CSV
             tax_file = await self._create_tax_csv(result)
             
-            # Payments details CSV
-            payments_file = await self._create_payments_csv(result)
+            # Payments details CSV (only if has payments)
+            payments_file = None
+            if result["payments_count"] > 0:
+                payments_file = await self._create_payments_csv(result)
 
             return {
                 **result,
